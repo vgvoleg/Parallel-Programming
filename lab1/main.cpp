@@ -28,6 +28,14 @@ double multH(int dCount, const double *h) {
   return result;
 }
 
+int multN(int dCount, const int *n) {
+  int result = 1;
+  for (int i = 0; i < dCount; i++) {
+    result *= n[i];
+  }
+  return result;
+}
+
 double initH(int dCount, double *h, int *n, double *xleft, double *xright) {
   for (int i = 0; i < dCount; i++) {
     h[i] = ((xright[i] - xleft[i]) / n[i]);
@@ -35,7 +43,57 @@ double initH(int dCount, double *h, int *n, double *xleft, double *xright) {
 }
 
 double func(double *x) {
-  return exp(-x[0] - x[1] - x[2] - x[3]);
+//  return exp(-x[0] - x[1] - x[2]);
+  return x[0] + x[1];
+}
+
+void getPointByStep(int dCount, int step, int *n, double *h,
+                    double *x, double *xleft){
+  if (dCount == 1){
+    x[0] = xleft[0] + step*h[0];
+    return;
+  }
+  for (int i = 0; i<dCount; i++){
+    x[i] = step % n[i];
+    x[i] = xleft[i] + x[i]*h[i];
+    step/=n[i];
+  }
+}
+
+double integral(int dCount, int *n, double *xleft, double *xright){
+  double *h = new double[dCount];
+  initH(dCount, h, n, xleft, xright);
+  double H = multH(dCount, h);
+  int N = multN(dCount, n);
+  double sum = 0; double coef = 0;
+  double *x = new double[dCount];
+  for (int i = 0; i<=N; i++){
+    getPointByStep(dCount, i, n, h, x, xleft);
+    coef = coeff(dCount, x, xleft, xright);
+    sum+=coef*H*func(x);
+  }
+  return sum;
+}
+
+double pintegral(int dCount, int *n, double *xleft, double *xright){
+  double *h = new double[dCount];
+  initH(dCount, h, n, xleft, xright);
+  double H = multH(dCount, h);
+  int N = multN(dCount, n);
+  double sum = 0; double coef = 0;
+  double localSum = 0; int i;
+  #pragma omp parallel private(i, coef) firstprivate(localSum) shared(H, N, dCount, xleft, xright) reduction(+:sum) num_threads(2)
+  {
+    double *x = new double[dCount];
+    #pragma omp for
+    for (i = 0; i <= N; i++) {
+      getPointByStep(dCount, i, n, h, x, xleft);
+      coef = coeff(dCount, x, xleft, xright);
+      localSum += coef * H * func(x);
+    }
+    sum+=localSum;
+  }
+  return sum;
 }
 
 double linear_nIntegral(int dCount, int dCurr, double *h, int *n,
@@ -117,57 +175,23 @@ double parallel_nIntegral(int dCount, int dCurr, double *h, int *n,
   return sum1 + sum2;
 }
 
-
-//double parallel_nIntegralTBB(int dCount, int dCurr, double *h, int *n,
-//                          double *x, double *xleft, double *xright) {
-//  if (dCount - dCurr == 1) {
-//    double sum = 0, localSum = 0;
-//    double coef;
-//    int i;
-//    for (i = 0; i <= n[dCurr]; i++) {
-//      x[dCurr] = xleft[dCurr] + i * h[dCurr];
-//      coef = coeff(dCount, x, xleft, xright);
-//      localSum += coef * H_m * func(x);
-//    }
-//    sum += localSum;
-//    return sum;
-//  }
-//  double sum1 = 0, sum2 = 0;
-//  tbb::task_group g;
-//  g.run([&]{
-//    for (double i = xleft[dCurr]; i < (xright[dCurr] - xleft[dCurr]) / 2; i += h[dCurr]) {
-//      x[dCurr] = i;
-//      sum1 += parallel_nIntegral(dCount, dCurr + 1, h, n, x, xleft, xright);
-//    }
-//  });
-//
-//  g.run([&]{
-//    for (double i = (xright[dCurr] - xleft[dCurr]) / 2; i <= xright[dCurr]; i += h[dCurr]) {
-//      x[dCurr] = i;
-//      sum2 += parallel_nIntegral(dCount, dCurr + 1, h, n, x, xleft, xright);
-//    }
-//  });
-//  g.wait();
-//  return sum1 + sum2;
-//}
-
 int main() {
-  const int dCount = 4;
+  const int dCount = 2;
   int *n = new int[dCount];
   double *h = new double[dCount];
   double *xleft = new double[dCount], *xright = new double[dCount];
 
-  n[0] = 50;
-  n[1] = 50;
-  n[2] = 50;
-  n[3] = 50;
+  n[0] = 2;
+  n[1] = 2;
+//  n[2] = 500;
+//  n[3] = 50;
 //  n[3] = 350;
 //  n[4] = 20;
 
-  xleft[0] = -3; xright[0] = 1;
-  xleft[1] = -2; xright[1] = 3;
-  xleft[2] = 0; xright[2] = 1;
-  xleft[3] = -3; xright[3] = 3;
+  xleft[0] = 0; xright[0] = 1;
+  xleft[1] = 0; xright[1] = 1;
+//  xleft[2] = 0; xright[2] = 1;
+//  xleft[3] = -3; xright[3] = 3;
 //  xleft[4] = -3; xright[4] = 3;
 
   initH(dCount, h, n, xleft, xright);
@@ -179,7 +203,8 @@ int main() {
   double *x = new double[dCount];
 
   t0 = omp_get_wtime();
-  result = linear_nIntegral(dCount, 0, h, n, x, xleft, xright);
+//  result = linear_nIntegral(dCount, 0, h, n, x, xleft, xright);
+  result = integral(dCount, n, xleft, xright);
   t1 = omp_get_wtime();
   diffTime1 = t1 - t0;
   std::cout << "Integral: " << result << std::endl;
@@ -187,34 +212,33 @@ int main() {
 
   std::cout << "========================" << std::endl;
 
-  #pragma omp parallel num_threads(2)
-  {
-    #pragma omp single
-    {
-      t0 = omp_get_wtime();
-      result = parallel_nIntegral(dCount, 0, h, n, x, xleft, xright);
-      t1 = omp_get_wtime();
-      diffTime2 = t1-t0;
-    }
-  }
-  std::cout<<"Integral: "<<result<<std::endl;
-  std::cout<<"Time parallel with tasks: "<<diffTime2<<std::endl;
-
-  std::cout<<"========================"<<std::endl;
-
-  std::cout<<"Profit = "<<diffTime1/diffTime2<<std::endl;
-
-
-//  tbb::task_scheduler_init init(2);
-//  t0 = omp_get_wtime();
-//  result = parallel_nIntegralTBB(dCount, 0, h, n, x, xleft, xright);
-//  t1 = omp_get_wtime();
-//  diffTime2 = t1-t0;
+//  #pragma omp parallel num_threads(2)
+//  {
+//    #pragma omp single
+//    {
+//      t0 = omp_get_wtime();
+//      result = parallel_nIntegral(dCount, 0, h, n, x, xleft, xright);
+//      t1 = omp_get_wtime();
+//      diffTime2 = t1-t0;
+//    }
+//  }
 //  std::cout<<"Integral: "<<result<<std::endl;
 //  std::cout<<"Time parallel with tasks: "<<diffTime2<<std::endl;
 //
 //  std::cout<<"========================"<<std::endl;
 //
 //  std::cout<<"Profit = "<<diffTime1/diffTime2<<std::endl;
+
+
+  t0 = omp_get_wtime();
+  result = pintegral(dCount, n, xleft, xright);
+  t1 = omp_get_wtime();
+  diffTime2 = t1-t0;
+  std::cout<<"Integral: "<<result<<std::endl;
+  std::cout<<"Time parallel with tasks: "<<diffTime2<<std::endl;
+
+  std::cout<<"========================"<<std::endl;
+
+  std::cout<<"Profit = "<<diffTime1/diffTime2<<std::endl;
   return 0;
 }
